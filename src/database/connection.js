@@ -1,10 +1,9 @@
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
 import * as schema from './schema.js';
-import 'dotenv/config';
 
 // Initialize Neon database connection
-const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:password@localhost:5432/imventory_db';
+const connectionString = import.meta.env.VITE_DATABASE_URL || 'postgresql://postgres:password@localhost:5432/imventory_db';
 
 // Create the Neon client
 const sql = neon(connectionString);

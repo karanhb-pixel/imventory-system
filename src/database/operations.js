@@ -1,18 +1,31 @@
 import { db, schema } from './connection.js';
-import { eq, and, desc, sql } from 'drizzle-orm';
+import { eq, and, desc, sql, asc } from 'drizzle-orm';
 
 // Database utility functions for inventory operations
 
 // Get all items with their purchases
-export async function getAllItems() {
+export async function getAllItems(sortBy = 'name', sortOrder = 'asc') {
   try {
+    let orderByClause;
+    
+    if (sortBy === 'name') {
+      orderByClause = sortOrder === 'asc'
+        ? [asc(schema.items.name)]
+        : [desc(schema.items.name)];
+    } else if (sortBy === 'date') {
+      // Sort by last purchase date
+      orderByClause = [desc(schema.items.createdAt)]; // Fallback to creation date
+    } else {
+      orderByClause = [desc(schema.items.createdAt)];
+    }
+
     const result = await db.query.items.findMany({
       with: {
         purchases: {
           orderBy: desc(schema.purchases.date)
         }
       },
-      orderBy: desc(schema.items.createdAt)
+      orderBy: orderByClause
     });
 
     return {
@@ -244,15 +257,28 @@ export async function updateItemName(itemId, newName) {
 }
 
 // Search items by name
-export async function searchItems(searchTerm) {
+export async function searchItems(searchTerm, sortBy = 'name', sortOrder = 'asc') {
   try {
+    let orderByClause;
+    
+    if (sortBy === 'name') {
+      orderByClause = sortOrder === 'asc'
+        ? [asc(schema.items.name)]
+        : [desc(schema.items.name)];
+    } else if (sortBy === 'date') {
+      orderByClause = [desc(schema.items.createdAt)]; // Fallback to creation date
+    } else {
+      orderByClause = [desc(schema.items.createdAt)];
+    }
+
     const result = await db.query.items.findMany({
       with: {
         purchases: {
           orderBy: desc(schema.purchases.date)
         }
       },
-      where: (items, { sql }) => sql`LOWER(${items.name}) LIKE LOWER('%' || ${searchTerm} || '%')`
+      where: (items, { sql }) => sql`LOWER(${items.name}) LIKE LOWER('%' || ${searchTerm} || '%')`,
+      orderBy: orderByClause
     });
 
     return {

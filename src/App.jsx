@@ -17,6 +17,8 @@ Features included:
 
 import React, { useEffect, useMemo, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
+import { addItemWithPurchase } from "./database/operations.js";
+import { checkConnection } from "./database/connection.js";
 
 const STORAGE_KEY = "inventoryApp.data";
 
@@ -48,6 +50,10 @@ export default function App() {
   const [showNewItemForm, setShowNewItemForm] = useState(false);
   const [notification, setNotification] = useState({ show: false, message: '', type: 'success' });
   const [isLoading, setIsLoading] = useState(false);
+  const [sortBy, setSortBy] = useState("name"); // "name" or "date"
+  const [sortOrder, setSortOrder] = useState("asc"); // "asc" or "desc"
+  const [isSyncingToDatabase, setIsSyncingToDatabase] = useState(false);
+  const [databaseStatus, setDatabaseStatus] = useState({ checked: false, connected: false });
 
   // New item form
   const [newName, setNewName] = useState("");
@@ -59,6 +65,21 @@ export default function App() {
   useEffect(() => {
     saveData(state);
   }, [state]);
+
+  // Check database connection on component mount
+  useEffect(() => {
+    checkDatabaseConnection();
+  }, []);
+
+  // Check database connection status
+  async function checkDatabaseConnection() {
+    try {
+      const result = await checkConnection();
+      setDatabaseStatus({ checked: true, connected: result.connected });
+    } catch (error) {
+      setDatabaseStatus({ checked: true, connected: false });
+    }
+  }
 
   // Notification helper
   const showNotification = (message, type = 'success', duration = 3000) => {
@@ -90,7 +111,7 @@ export default function App() {
 
   // derived list with last purchase
   const itemsWithMeta = useMemo(() => {
-    return state.items.map((it) => {
+    const items = state.items.map((it) => {
       const sorted = [...(it.purchases || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
       const last = sorted[0] || null;
       const prev = sorted[1] || null;
@@ -98,7 +119,26 @@ export default function App() {
       const totalSpent = (it.purchases || []).reduce((sum, p) => sum + (p.qty * p.unitPrice), 0);
       return { ...it, last, prev, priceChange, totalSpent, purchaseCount: (it.purchases || []).length };
     });
-  }, [state.items]);
+
+    // Sort items based on current sort settings
+    let sortedItems = [...items];
+    
+    if (sortBy === "name") {
+      sortedItems.sort((a, b) => {
+        const comparison = a.name.localeCompare(b.name);
+        return sortOrder === "asc" ? comparison : -comparison;
+      });
+    } else if (sortBy === "date" && items.some(item => item.last)) {
+      sortedItems.sort((a, b) => {
+        const dateA = a.last ? new Date(a.last.date) : new Date(0);
+        const dateB = b.last ? new Date(b.last.date) : new Date(0);
+        const comparison = dateA - dateB;
+        return sortOrder === "asc" ? comparison : -comparison;
+      });
+    }
+
+    return sortedItems;
+  }, [state.items, sortBy, sortOrder]);
 
   const visibleItems = itemsWithMeta.filter((it) => it.name.toLowerCase().includes(filter.toLowerCase()));
 
@@ -363,6 +403,59 @@ function addNewItem(e) {
     showNotification('All data cleared', 'success');
   }
 
+  // Sync data from localStorage to database
+  async function syncToDatabase() {
+    if (state.items.length === 0) {
+      showNotification('No data to sync. Add some items first.', 'error');
+      return;
+    }
+
+    if (!databaseStatus.checked) {
+      await checkDatabaseConnection();
+    }
+
+    if (!databaseStatus.connected) {
+      showNotification('Database not connected. Please check your DATABASE_URL in .env file.', 'error');
+      return;
+    }
+
+    setIsSyncingToDatabase(true);
+    let successCount = 0;
+    let errorCount = 0;
+
+    try {
+      for (const item of state.items) {
+        try {
+          // Sync each item and its purchases
+          for (const purchase of item.purchases || []) {
+            await addItemWithPurchase({
+              name: item.name,
+              supplier: purchase.supplier || '',
+              qty: purchase.qty,
+              unitPrice: purchase.unitPrice,
+              date: new Date(purchase.date).toISOString().split('T')[0] // Format date for database
+            });
+            successCount++;
+          }
+        } catch (error) {
+          console.error(`Error syncing item ${item.name}:`, error);
+          errorCount++;
+        }
+      }
+
+      if (errorCount === 0) {
+        showNotification(`Successfully synced ${successCount} records to database!`, 'success');
+      } else {
+        showNotification(`Synced ${successCount} records successfully, ${errorCount} failed.`, 'warning');
+      }
+    } catch (error) {
+      console.error('Sync error:', error);
+      showNotification('Failed to sync to database. Please try again.', 'error');
+    } finally {
+      setIsSyncingToDatabase(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Notification System */}
@@ -416,16 +509,60 @@ function addNewItem(e) {
             >
               Clear All
             </button>
+            <button
+              onClick={syncToDatabase}
+              className="button bg-purple-600 text-white"
+              disabled={isSyncingToDatabase || !databaseStatus.checked}
+              title={!databaseStatus.connected ? 'Check DATABASE_URL in .env' : 'Sync local data to database'}
+            >
+              {isSyncingToDatabase
+                ? 'Syncing...'
+                : databaseStatus.connected
+                  ? 'Store to Database'
+                  : 'Database Offline'
+              }
+            </button>
+            {databaseStatus.checked && !databaseStatus.connected && (
+              <button
+                onClick={checkDatabaseConnection}
+                className="button button-secondary"
+                title="Check database connection"
+              >
+                🔄 Check DB
+              </button>
+            )}
           </div>
         </header>
 
         <section className="mb-4">
-          <input
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Search items..."
-            className="input"
-          />
+          <div className="flex flex-col sm:flex-row gap-4">
+            <div className="flex-1">
+              <input
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Search items..."
+                className="input w-full"
+              />
+            </div>
+            <div className="flex gap-2">
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                className="input"
+                aria-label="Sort by"
+              >
+                <option value="name">Sort by Name</option>
+                <option value="date">Sort by Last Purchase Date</option>
+              </select>
+              <button
+                onClick={() => setSortOrder(sortOrder === "asc" ? "desc" : "asc")}
+                className="button button-secondary px-3"
+                aria-label={`Toggle sort order: ${sortOrder === "asc" ? "ascending to descending" : "descending to ascending"}`}
+              >
+                {sortOrder === "asc" ? "↑" : "↓"}
+              </button>
+            </div>
+          </div>
         </section>
 
         {showNewItemForm && (
@@ -593,6 +730,11 @@ function addNewItem(e) {
 
         <footer className="mt-6 text-sm text-gray-500 text-center">
           Data stored locally in your browser • Export/Import for backup
+          {databaseStatus.connected && (
+            <div className="mt-2 text-green-600">
+              ✓ Database connection active - Use "Store to Database" to sync to cloud
+            </div>
+          )}
         </footer>
       </div>
     </div>
