@@ -15,7 +15,10 @@
     "vite": "^7.2.0"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.0.2",
     "@vitejs/plugin-react": "^5.1.0",
+    "dotenv": "^17.2.3",
+    "drizzle-orm": "^0.44.7",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "uuid": "^13.0.0"
